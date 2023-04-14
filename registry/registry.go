@@ -13,7 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"rsc.io/letsencrypt"
+	"golang.org/x/crypto/acme"
+	"golang.org/x/crypto/acme/autocert"
 
 	logrus_bugsnag "github.com/Shopify/logrus-bugsnag"
 
@@ -78,14 +79,16 @@ var defaultCipherSuites = []uint16{
 }
 
 // maps tls version strings to constants
-var defaultTLSVersionStr = "tls1.2"
-var tlsVersions = map[string]uint16{
-	// user specified values
-	"tls1.0": tls.VersionTLS10,
-	"tls1.1": tls.VersionTLS11,
-	"tls1.2": tls.VersionTLS12,
-	"tls1.3": tls.VersionTLS13,
-}
+var (
+	defaultTLSVersionStr = "tls1.2"
+	tlsVersions          = map[string]uint16{
+		// user specified values
+		"tls1.0": tls.VersionTLS10,
+		"tls1.1": tls.VersionTLS11,
+		"tls1.2": tls.VersionTLS12,
+		"tls1.3": tls.VersionTLS13,
+	}
+)
 
 // this channel gets notified when process receives signal. It is global to ease unit testing
 var quit = make(chan os.Signal, 1)
@@ -96,7 +99,6 @@ var ServeCmd = &cobra.Command{
 	Short: "`serve` stores and distributes Docker images",
 	Long:  "`serve` stores and distributes Docker images.",
 	Run: func(cmd *cobra.Command, args []string) {
-
 		// setup context
 		ctx := dcontext.WithVersion(dcontext.Background(), version.Version)
 
@@ -247,19 +249,14 @@ func (registry *Registry) ListenAndServe() error {
 			if config.HTTP.TLS.Certificate != "" {
 				return fmt.Errorf("cannot specify both certificate and Let's Encrypt")
 			}
-			var m letsencrypt.Manager
-			if err := m.CacheFile(config.HTTP.TLS.LetsEncrypt.CacheFile); err != nil {
-				return err
-			}
-			if !m.Registered() {
-				if err := m.Register(config.HTTP.TLS.LetsEncrypt.Email, nil); err != nil {
-					return err
-				}
-			}
-			if len(config.HTTP.TLS.LetsEncrypt.Hosts) > 0 {
-				m.SetHosts(config.HTTP.TLS.LetsEncrypt.Hosts)
+			m := &autocert.Manager{
+				HostPolicy: autocert.HostWhitelist(config.HTTP.TLS.LetsEncrypt.Hosts...),
+				Cache:      autocert.DirCache(config.HTTP.TLS.LetsEncrypt.CacheFile),
+				Email:      config.HTTP.TLS.LetsEncrypt.Email,
+				Prompt:     autocert.AcceptTOS,
 			}
 			tlsConf.GetCertificate = m.GetCertificate
+			tlsConf.NextProtos = append(tlsConf.NextProtos, acme.ALPNProto)
 		} else {
 			tlsConf.Certificates = make([]tls.Certificate, 1)
 			tlsConf.Certificates[0], err = tls.LoadX509KeyPair(config.HTTP.TLS.Certificate, config.HTTP.TLS.Key)
@@ -364,9 +361,7 @@ func configureLogging(ctx context.Context, config *configuration.Configuration) 
 			TimestampFormat: time.RFC3339Nano,
 		})
 	case "logstash":
-		log.SetFormatter(&logstash.LogstashFormatter{
-			TimestampFormat: time.RFC3339Nano,
-		})
+		log.SetFormatter(&logstash.LogstashFormatter{})
 	default:
 		// just let the library use default on empty string.
 		if config.Log.Formatter != "" {
