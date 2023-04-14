@@ -14,7 +14,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
-	"google.golang.org/cloud/storage"
+	"cloud.google.com/go/storage"
 	"gopkg.in/check.v1"
 )
 
